@@ -7,15 +7,25 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import au.com.telstra.simcardactivator.dto.SimRecordResponse;
+import au.com.telstra.simcardactivator.entity.ActivationRecord;
+import au.com.telstra.simcardactivator.repository.ActivationRecordRepository;
 
-    @RestController
+import java.util.Optional;
+
+@RestController
     @RequestMapping("/sims")
     public class SimActivationController {
-        private static final Logger log = LoggerFactory.getLogger(SimActivationController.class);
-        private final ActivationClient activationClient;
 
-        public SimActivationController(ActivationClient activationClient) {
+        private static final Logger log = LoggerFactory.getLogger(SimActivationController.class);
+
+        private final ActivationClient activationClient;
+        private final ActivationRecordRepository repo;
+
+        public SimActivationController(ActivationClient activationClient,
+                                       ActivationRecordRepository repo) {
             this.activationClient = activationClient;
+            this.repo = repo;
         }
 
         @PostMapping("/activate")
@@ -27,6 +37,7 @@ import org.springframework.web.bind.annotation.*;
 
             boolean success = activationClient.activateIccid(request.getIccid());
 
+            // Log per spec
             if (success) {
                 log.info("Activation SUCCESS for ICCID={} (customer={})",
                         request.getIccid(), request.getCustomerEmail());
@@ -35,9 +46,24 @@ import org.springframework.web.bind.annotation.*;
                         request.getIccid(), request.getCustomerEmail());
             }
 
-            return ResponseEntity.ok(
-                    new ActivateSimResponse(success, success ? "SIM activation succeeded" : "SIM activation failed")
+            // Persist the result
+            ActivationRecord saved = repo.save(
+                    new ActivationRecord(request.getIccid(), request.getCustomerEmail(), success)
             );
+
+            String msg = success ? "SIM activation succeeded" : "SIM activation failed";
+            return ResponseEntity.ok(new ActivateSimResponse(success, msg));
+        }
+
+        // New GET query endpoint: /sims/query?simCardId=123
+        @GetMapping("/query")
+        public ResponseEntity<?> queryById(@RequestParam("simCardId") long simCardId) {
+            Optional<ActivationRecord> opt = repo.findById(simCardId);
+            if (!opt.isPresent()) {
+                return ResponseEntity.notFound().build();
+            }
+            ActivationRecord r = opt.get();
+            return ResponseEntity.ok(new SimRecordResponse(r.getIccid(), r.getCustomerEmail(), r.isActive()));
         }
 
         private boolean isBlank(String s) { return s == null || s.trim().isEmpty(); }
